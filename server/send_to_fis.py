@@ -526,7 +526,7 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
             "ApplicationId": -1,
             "ApplicationPriorities": priorities_list
         },
-        "SelectedCompetitiveGroupIDs": selected_cg_ids,
+        "SelectedCompetitiveGroupIDs": [],
         "SelectedDirectionIDs": [],
         "SelectedParentDirectionIDs": None,
         "SelectedTargetOrganizationIDO": 0,
@@ -554,16 +554,28 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
         return {"application_number": app_num, "passport_series": passport_series, "passport_number": passport_number, "status": "ERROR", "message": err_msg}
 
     if j0.get("IsError"):
-        err_msg = j0.get("Message", "Unknown error in NewWz0")
-        print("[ERROR] NewWz0 returned error: " + str(err_msg))
-        status_str = "ALREADY_EXISTS" if "\u0443\u0436\u0435 \u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043d\u043e" in str(err_msg).lower() else "ERROR"
-        return {"application_number": app_num, "passport_series": passport_series, "passport_number": passport_number, "status": status_str, "message": str(err_msg)}
-
-    app_id = extract_id(j0.get("Data"), "ApplicationID", "ApplicationId", "id") or extract_id(j0, "ApplicationID", "ApplicationId", "id")
-    if not app_id:
-        err_msg = "NewWz0 did not return ApplicationID"
-        print("[ERROR] " + err_msg)
+        err_msg = str(j0.get("Message") or "Error in NewWz0")
+        print("[NEWWZ0 RESPONSE ERROR] " + err_msg)
         return {"application_number": app_num, "passport_series": passport_series, "passport_number": passport_number, "status": "ERROR", "message": err_msg}
+
+    data0 = j0.get("Data") if isinstance(j0.get("Data"), dict) else j0
+    app_id = extract_id(data0, "ApplicationID", "ApplicationId", "id") or extract_id(j0, "ApplicationID", "ApplicationId", "id")
+
+    entrant_is_new = data0.get("EntrantIsNew") if isinstance(data0, dict) else j0.get("EntrantIsNew")
+
+    if not app_id or app_id == 0 or entrant_is_new is False:
+        msg = "Entrant or Application already exists in FIS GIA (EntrantIsNew = False)"
+        if app_id and int(app_id) > 0:
+            print("[ALREADY EXISTS] Application #" + str(app_num) + " already exists in FIS GIA (EntrantIsNew = False, ApplicationID = " + str(app_id) + "). Deleting draft application...")
+            try:
+                del_res = s.post(target_url + "/InstitutionApplication/DeleteApplications", json={"applicationId": [int(app_id)]}, headers=headers_json)
+                print(f"   [DELETED DRAFT] Deleted draft ApplicationID {app_id} (HTTP {del_res.status_code}: {del_res.text[:150]})")
+            except Exception as del_err:
+                print(f"   [WARNING] Failed to delete draft ApplicationID {app_id}: {del_err}")
+        else:
+            print("[ALREADY EXISTS] Application #" + str(app_num) + " already exists in FIS GIA (EntrantIsNew = False). Skipping further processing.")
+
+        return {"application_number": app_num, "passport_series": passport_series, "passport_number": passport_number, "status": "ALREADY_EXISTS", "message": msg}
 
     print("[SUCCESS] Step 1 created ApplicationID: " + str(app_id))
 
