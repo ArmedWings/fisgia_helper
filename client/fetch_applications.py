@@ -4,6 +4,7 @@ import sys
 import json
 import random
 import re
+import time
 from bars_client import BarsClient
 
 # Windows 7 Console UTF-8 Fix
@@ -43,8 +44,9 @@ def parse_selected_specialties(plans_rows: list) -> list:
     return selected
 
 def generate_random_app_number():
-    rand_digits = random.randint(10000, 99999)
-    return f"{rand_digits}-26"
+    # Application numbers are managed centrally on the server via ID_START / ID_SUFFIX.
+    # Returns empty string so the server auto-assigns sequential application numbers.
+    return ""
 
 def fetch_and_export_applications():
     client_dir = os.path.dirname(__file__)
@@ -211,6 +213,7 @@ def fetch_and_export_applications():
                 print(f"   [DEBUG] Server row payload keys for ID={decl_id}: {dict(row)}")
 
             applications_list.append(app_item)
+            time.sleep(0.15)
     else:
         # If BARS API returned no rows (offline or session limit), check local parsed_details.json as initial template
         print("[CLIENT INFO] No live rows fetched from BARS API. Checking local template...")

@@ -22,25 +22,52 @@ if sys.platform == 'win32':
         except Exception:
             pass
 
-# Pure Python config.env / .env parser (Zero external dependencies)
+# Pure Python config.env / .env parser with env_mode support (dev.env / prod.env)
 def _load_server_env():
-    server_dir = os.path.dirname(__file__)
-    for filename in ['config.env', '.env']:
-        filepath = os.path.join(server_dir, filename)
-        if os.path.exists(filepath):
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith('#') and '=' in line:
-                            k, v = line.split('=', 1)
-                            k = k.strip()
-                            v = v.strip().strip("'").strip('"')
-                            if k and k not in os.environ:
-                                os.environ[k] = v
-                return
-            except Exception:
-                pass
+    server_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Determine env mode (--prod, --dev, --env=prod, --env=dev, or os.environ APP_ENV/ENV_MODE, default 'dev')
+    env_mode = os.getenv("APP_ENV", os.getenv("ENV_MODE", "dev")).lower().strip()
+    for arg in sys.argv:
+        if arg.startswith("--env="):
+            env_mode = arg.split("=", 1)[1].lower().strip()
+        elif arg.lower() in ["--prod", "prod"]:
+            env_mode = "prod"
+        elif arg.lower() in ["--dev", "dev"]:
+            env_mode = "dev"
+
+    os.environ["APP_ENV"] = env_mode
+
+    candidate_files = [
+        f"{env_mode}.env",
+        f"{env_mode}.config.env",
+        "config.env",
+        ".env"
+    ]
+
+    loaded_file = None
+    for fname in candidate_files:
+        for search_dir in [server_dir, os.path.dirname(server_dir), os.getcwd()]:
+            filepath = os.path.join(search_dir, fname)
+            if os.path.exists(filepath):
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith('#') and '=' in line:
+                                k, v = line.split('=', 1)
+                                k = k.strip()
+                                v = v.strip().strip("'").strip('"')
+                                if k:
+                                    os.environ[k] = v
+                    loaded_file = filepath
+                    break
+                except Exception:
+                    pass
+        if loaded_file:
+            break
+    print(f"[CONFIG] Active Environment: {env_mode.upper()} (Loaded from: {loaded_file or 'OS Environment'})")
+    return env_mode
 
 _load_server_env()
 
@@ -520,7 +547,7 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
         "DocumentNumber": passport_number,
         "FromEPGU": True,
         "IdentityDocumentTypeID": "1",
-        "RegistrationDate": data.get("registration_date", DEFAULT_SETTINGS["registration_date"]),
+        "RegistrationDate": data.get("registration_date") or os.getenv("REGISTRATION_DATE") or DEFAULT_SETTINGS["registration_date"],
         "ApplicationNumber": str(app_num),
         "Priorities": {
             "ApplicationId": -1,
@@ -587,7 +614,7 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
         print("   [WARNING] Could NOT extract EntrantID for ApplicationID " + str(app_id))
 
     # STEP 2: UpdWz1
-    reg_date = data.get("registration_date", DEFAULT_SETTINGS["registration_date"])
+    reg_date = data.get("registration_date") or os.getenv("REGISTRATION_DATE") or DEFAULT_SETTINGS["registration_date"]
     upd_wz1_payload = {
         "ApplicationID": int(app_id),
         "InstitutionID": int(institution_id),
@@ -787,27 +814,62 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
         "unmatched_specialties": unmatched_specialties
     }
 
+class TeeLogger:
+    def __init__(self, filepath):
+        self.terminal = sys.stdout
+        self.log_file = open(filepath, "w", encoding="utf-8")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log_file.write(message)
+        self.log_file.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log_file.flush()
+
+    def close(self):
+        self.log_file.close()
+
 def run_fis_submission(json_file=None):
     now_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     server_dir = os.path.dirname(os.path.abspath(__file__))
 
-    log_filename = os.path.join(server_dir, f"log_{now_str}.txt")
-    response_filename = os.path.join(server_dir, f"response_{now_str}.json")
+    logs_dir = os.path.join(server_dir, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+
+    log_filename = os.path.join(logs_dir, f"log_{now_str}.txt")
+    response_filename = os.path.join(logs_dir, f"response_{now_str}.json")
+
+    tee_logger = TeeLogger(log_filename)
+    sys.stdout = tee_logger
 
     global SPECIALTY_PREFIX_MAP
     SPECIALTY_PREFIX_MAP = load_specialty_prefix_map()
 
+    if not json_file or str(json_file).startswith("--") or str(json_file).lower() in ["dev", "prod"]:
+        json_file = None
+        for arg in sys.argv[1:]:
+            if not arg.startswith("--") and arg.lower() not in ["dev", "prod"]:
+                if arg.endswith(".json") or os.path.exists(arg):
+                    json_file = arg
+                    break
+
     if not json_file:
-        if len(sys.argv) > 1 and sys.argv[1].endswith(".json"):
-            json_file = sys.argv[1]
-        else:
-            json_file = os.path.join(server_dir, "applications.json")
-            if not os.path.exists(json_file):
-                client_json = os.path.join(os.path.dirname(server_dir), "client", "applications.json")
-                if os.path.exists(client_json):
-                    json_file = client_json
-                else:
-                    json_file = os.path.join(server_dir, "parsed_details.json")
+        candidate_json_paths = [
+            os.path.join(server_dir, "applications.json"),
+            os.path.join(os.path.dirname(server_dir), "client", "applications.json"),
+            os.path.join(server_dir, "parsed_details.json"),
+            os.path.join(os.getcwd(), "applications.json"),
+            os.path.join(os.getcwd(), "parsed_details.json"),
+        ]
+        for p in candidate_json_paths:
+            if os.path.exists(p):
+                json_file = p
+                break
+
+    if not json_file:
+        json_file = os.path.join(server_dir, "parsed_details.json")
 
     print(f"=== FIS GIA APPLICATION SUBMISSION RUNNER ({now_str}) ===")
     print(f"Loading applications data from: {json_file}")
@@ -863,16 +925,39 @@ def run_fis_submission(json_file=None):
 
     summary_responses = []
 
+    # Application ID Counter Setup from env (ID_START, ID_SUFFIX)
+    id_start_val = int(os.getenv("ID_START", "294"))
+    id_suffix_val = os.getenv("ID_SUFFIX", "-26")
+    current_app_counter = id_start_val
+
     # Batch Processing Loop with CONTINUE ON ERROR
     for idx, app_data in enumerate(applications_list, start=1):
-        app_num = app_data.get("application_number", "N/A")
-        print(f"\n=================================================================")
-        print(f"   [BATCH {idx}/{len(applications_list)}] Submitting Application #{app_num}")
-        print(f"=================================================================")
+        raw_app_num = str(app_data.get("application_number") or app_data.get("app_number") or "").strip()
+
+        if not raw_app_num:
+            assigned_app_num = f"{current_app_counter}{id_suffix_val}"
+            app_data["application_number"] = assigned_app_num
+            app_num = assigned_app_num
+            print(f"\n=================================================================")
+            print(f"   [BATCH {idx}/{len(applications_list)}] Submitting Application #{assigned_app_num} (Auto-assigned counter: {current_app_counter})")
+            print(f"=================================================================")
+        else:
+            app_num = raw_app_num
+            print(f"\n=================================================================")
+            print(f"   [BATCH {idx}/{len(applications_list)}] Submitting Application #{app_num} (Provided from input data)")
+            print(f"=================================================================")
 
         try:
             res = submit_single_application(s, target_url, headers_json, app_data, discovered_config)
             summary_responses.append(res)
+
+            res_status = res.get("status")
+            if res_status in ["CREATED", "PARTIAL_SUCCESS"]:
+                if not raw_app_num:
+                    current_app_counter += 1
+            elif res_status in ["ALREADY_EXISTS", "ERROR_UNMATCHED_SPECIALTY"]:
+                if not raw_app_num:
+                    print(f"   [COUNTER RE-USE] Keeping counter at {current_app_counter} for next entrant.")
         except Exception as e:
             print(f"[EXCEPTION ERROR] Failed to submit application #{app_num}: {e}")
             summary_responses.append({
@@ -882,20 +967,42 @@ def run_fis_submission(json_file=None):
                 "status": "ERROR",
                 "message": f"Execution Exception: {str(e)}"
             })
-            # Skip iteration without breaking loop!
-            continue
+
+        # Safety rate-limiting delay between applications to avoid HTTP 429 / server block
+        if idx < len(applications_list):
+            time.sleep(0.7)
 
     # Write summary response JSON
     with open(response_filename, "w", encoding="utf-8") as f:
         json.dump(summary_responses, f, ensure_ascii=False, indent=2)
 
+    cnt_created = sum(1 for r in summary_responses if r.get("status") == "CREATED")
+    cnt_already = sum(1 for r in summary_responses if r.get("status") == "ALREADY_EXISTS")
+    cnt_partial = sum(1 for r in summary_responses if r.get("status") == "PARTIAL_SUCCESS")
+    cnt_error = sum(1 for r in summary_responses if "ERROR" in str(r.get("status", "")))
+
     print("\n=================================================================")
     print("   BATCH PROCESSING FINISHED SUMMARY")
     print(f"   Total Processed: {len(summary_responses)}")
+    print(f"   - Successfully Created (CREATED):            {cnt_created}")
+    print(f"   - Already Exists / Skipped (ALREADY_EXISTS): {cnt_already}")
+    print(f"   - Partial Success (PARTIAL_SUCCESS):         {cnt_partial}")
+    print(f"   - Errors (ERROR):                            {cnt_error}")
     print(f"   Console Log Saved: {log_filename}")
     print(f"   Response JSON Saved: {response_filename}")
     print("=================================================================")
 
+    try:
+        sys.stdout = tee_logger.terminal
+        tee_logger.close()
+    except Exception:
+        pass
+
 if __name__ == "__main__":
-    filepath = sys.argv[1] if len(sys.argv) > 1 else None
+    filepath = None
+    for arg in sys.argv[1:]:
+        if not arg.startswith("--") and arg.lower() not in ["dev", "prod"]:
+            if arg.endswith(".json") or os.path.exists(arg):
+                filepath = arg
+                break
     run_fis_submission(filepath)
