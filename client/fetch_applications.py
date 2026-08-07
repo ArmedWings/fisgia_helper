@@ -178,11 +178,11 @@ def fetch_and_export_applications():
             app_item = {
                 "application_number": app_num,
                 "bars_declaration_id": decl_id,
-                "portal_app_id": raw_fields.get("add_portal_id_for_declaration_portal_id") or row.get("add_portal_id_for_declaration_portal_id") or row.get("portal_id") or "",
+                "portal_app_id": raw_fields.get("add_portal_id_for_declaration_portal_id") or row.get("portal_id") or "",
                 "user_epgu_id": raw_fields.get("user_epgu_id") or row.get("user_epgu_id") or "",
-                "last_name": raw_fields.get("last_name") or raw_fields.get("surname") or row.get("last_name") or row.get("surname") or "",
-                "first_name": raw_fields.get("first_name") or raw_fields.get("firstname") or row.get("first_name") or row.get("firstname") or "",
-                "middle_name": raw_fields.get("middle_name") or raw_fields.get("patronymic") or row.get("middle_name") or row.get("patronymic") or "",
+                "last_name": raw_fields.get("last_name") or row.get("last_name") or "",
+                "first_name": raw_fields.get("first_name") or row.get("first_name") or "",
+                "middle_name": raw_fields.get("middle_name") or row.get("middle_name") or "",
                 "snils": raw_fields.get("snils") or row.get("snils") or "",
                 "passport_series": raw_fields.get("passport_series") or row.get("passport_series") or "",
                 "passport_number": raw_fields.get("passport_number") or row.get("passport_number") or "",
@@ -192,9 +192,11 @@ def fetch_and_export_applications():
                 "date_of_birth": raw_fields.get("date_of_birth") or row.get("date_of_birth") or "",
                 "reg_address_full": raw_fields.get("reg_address_full") or row.get("reg_address_full") or "",
                 "selected_specialties": selected_specs,
+                "diploma_series": raw_fields.get("diploma_series") or row.get("diploma_series") or "",
                 "diploma_number": raw_fields.get("diploma_number") or row.get("diploma_number") or "",
                 "diploma_date": raw_fields.get("diploma_date") or row.get("diploma_date") or "",
-                "diploma_organization": raw_fields.get("prev_unit") or row.get("prev_unit") or ""
+                "diploma_organization": raw_fields.get("prev_unit") or row.get("prev_unit") or "",
+                "average_mark": raw_fields.get("average_mark") or row.get("average_mark") or ""
             }
 
             fio = f"{app_item['last_name']} {app_item['first_name']} {app_item['middle_name']}".strip()
@@ -219,21 +221,14 @@ def fetch_and_export_applications():
                 single_app["application_number"] = generate_random_app_number()
                 applications_list.append(single_app)
 
-    # Write output to client/applications.json and copy to server/applications.json
+    # Write output ONLY to client/applications.json
     client_out = os.path.join(os.path.dirname(__file__), "applications.json")
-    server_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "server")
-    os.makedirs(server_dir, exist_ok=True)
-    server_out = os.path.join(server_dir, "applications.json")
 
     with open(client_out, "w", encoding="utf-8") as f:
         json.dump(applications_list, f, ensure_ascii=False, indent=2)
 
-    with open(server_out, "w", encoding="utf-8") as f:
-        json.dump(applications_list, f, ensure_ascii=False, indent=2)
-
     print(f"\n[CLIENT SUCCESS] Exported {len(applications_list)} application(s) to:")
     print(f"   - {client_out}")
-    print(f"   - {server_out}")
 
 if __name__ == "__main__":
     fetch_and_export_applications()

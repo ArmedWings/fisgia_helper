@@ -185,6 +185,18 @@ class LoggerWriter:
         self.terminal.flush()
         self.log.flush()
 
+def format_gpa(val):
+    if val is None or str(val).strip() in ("", "None", "null"):
+        return None
+    try:
+        val_str = str(val).replace(",", ".").strip()
+        val_float = float(val_str)
+        if val_float <= 0 or val_float > 5:
+            return None
+        return f"{val_float:.4f}".replace(".", ",")
+    except (ValueError, TypeError):
+        return None
+
 def extract_id(d, *keys):
     if not isinstance(d, dict):
         return None
@@ -674,7 +686,14 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
     s.post(target_url + "/Application/Wz2", json={"id": int(app_id)}, headers=headers_json)
 
     # STEP 3: Attach Education Document via /Entrant/setEditDocument
-    gpa_str = str(data.get("gpa") or data.get("GPA") or "0").replace(".", ",")
+    raw_gpa = data.get("average_mark")
+    gpa_str = format_gpa(raw_gpa)
+    doc_series_edu = str(data.get("diploma_series", "")).strip()
+    if doc_series_edu == "-":
+        doc_series_edu = ""
+
+    doc_org_edu = str(data.get("diploma_organization") or data.get("prev_unit") or "")
+
     edu_payload = {
         "EntrantID": int(entrant_id) if entrant_id else 0,
         "EntrantDocumentID": 0,
@@ -682,10 +701,10 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
         "DocumentTypeName": "",
         "UID": "",
         "ApplicationID": int(app_id),
-        "DocumentSeries": "",
+        "DocumentSeries": doc_series_edu,
         "DocumentNumber": str(data.get("diploma_number", "")),
-        "DocumentDate": str(data.get("diploma_date", "01.07.2026")),
-        "DocumentOrganization": str(data.get("diploma_organization", "")),
+        "DocumentDate": str(data.get("diploma_date", "")),
+        "DocumentOrganization": doc_org_edu,
         "OriginalReceived": True,
         "OriginalReceivedDate": str(reg_date),
         "EntDocEdu": {
@@ -798,9 +817,16 @@ def run_fis_submission(json_file=None):
     sys.stdout = LoggerWriter(log_filename)
 
     if not json_file:
-        json_file = os.path.join(server_dir, "applications.json")
-        if not os.path.exists(json_file):
-            json_file = os.path.join(server_dir, "parsed_details.json")
+        if len(sys.argv) > 1 and sys.argv[1].endswith(".json"):
+            json_file = sys.argv[1]
+        else:
+            json_file = os.path.join(server_dir, "applications.json")
+            if not os.path.exists(json_file):
+                client_json = os.path.join(os.path.dirname(server_dir), "client", "applications.json")
+                if os.path.exists(client_json):
+                    json_file = client_json
+                else:
+                    json_file = os.path.join(server_dir, "parsed_details.json")
 
     print(f"=== FIS GIA APPLICATION SUBMISSION RUNNER ({now_str}) ===")
     print(f"Loading applications data from: {json_file}")
