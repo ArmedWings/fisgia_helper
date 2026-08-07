@@ -49,100 +49,34 @@ _load_server_env()
 # ------------------------------------------------------------------------------
 FIS_BASE_URL = os.getenv("FIS_BASE_URL", "http://10.0.3.1:8383").rstrip('/')
 
-# # Keyword stem mapping for specialty names (Unicode escaped for Windows 7 compatibility)
-ALIAS_KEYWORD_GROUPS = {
-    # MMS (15.02.12 / 15.02.01 / 15.02.07 / Montazh, remont promyshlennogo oborudovaniya)
-    "\u043c\u043c\u0441": ["\u043c\u043c\u0441"],
-    "\u043c\u043e\u043d\u0442\u0430\u0436": ["\u043c\u043c\u0441"],
-    "\u043f\u0440\u043e\u043c\u044b\u0448\u043b\u0435\u043d\u043d\u043e\u0433\u043e \u043e\u0431\u043e\u0440\u0443\u0434\u043e\u0432\u0430\u043d\u0438\u044f": ["\u043c\u043c\u0441"],
-    "15.02.12": ["\u043c\u043c\u0441"],
-    "15.02.01": ["\u043c\u043c\u0441"],
-    "15.02.07": ["\u043c\u043c\u0441"],
+def load_specialty_prefix_map(filepath=None):
+    if not filepath:
+        server_dir = os.path.dirname(os.path.abspath(__file__))
+        filepath = os.path.join(server_dir, "specialties.json")
 
-    # ON / P (15.01.33 / 15.01.05 / Operator-naladchik, Stanochnik)
-    "\u043e\u043d": ["\u043e\u043d"],
-    "\u043e\u043f\u0435\u0440\u0430\u0442\u043e\u0440-\u043d\u0430\u043b\u0430\u0434\u0447\u0438\u043a": ["\u043e\u043d", "\u043f"],
-    "\u043e\u043f\u0435\u0440\u0430\u0442\u043e\u0440 \u043d\u0430\u043b\u0430\u0434\u0447\u0438\u043a": ["\u043e\u043d", "\u043f"],
-    "\u043d\u0430\u043b\u0430\u0434\u0447\u0438\u043a": ["\u043e\u043d"],
-    "\u043e\u043f\u0435\u0440\u0430\u0442\u043e\u0440": ["\u043e\u043d"],
-    "\u043c\u0435\u0442\u0430\u043b\u043b\u043e\u043e\u0431\u0440\u0430\u0431\u043e\u0442\u044b\u0432\u0430\u044e\u0449\u0438\u0445": ["\u043e\u043d", "\u043f"],
-    "\u0441\u0442\u0430\u043d\u043e\u0447\u043d\u0438\u043a": ["\u043f"],
-    "\u043f": ["\u043f"],
-    "15.01.33": ["\u043e\u043d"],
-    "15.01.05": ["\u043f"],
+    if not os.path.exists(filepath):
+        print(f"[WARNING] Specialties mapping file not found at: {filepath}")
+        return []
 
-    # TOA (23.02.07 / Avtotransport)
-    "\u0442\u043e\u0430": ["\u0442\u043e\u0430"],
-    "\u0430\u0432\u0442\u043e\u0442\u0440\u0430\u043d\u0441\u043f\u043e\u0440\u0442": ["\u0442\u043e\u0430"],
-    "\u0430\u0432\u0442\u043e\u0442\u0440\u0430\u043d\u0441\u043f\u043e\u0440\u0442\u043d\u044b\u0445": ["\u0442\u043e\u0430"],
-    "\u0430\u0432\u0442\u043e\u043c\u043e\u0431\u0438\u043b": ["\u0442\u043e\u0430"],
-    "23.02.07": ["\u0442\u043e\u0430"],
+    try:
+        with open(filepath, "rb") as f:
+            content = f.read()
+        try:
+            raw_data = json.loads(content.decode("utf-8-sig"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raw_data = json.loads(content.decode("cp1251"))
 
-    # SV (15.01.05 / Svarchik)
-    "\u0441\u0432": ["\u0441\u0432"],
-    "\u0441\u0432\u0430\u0440": ["\u0441\u0432"],
+        prefix_map = []
+        for item in raw_data:
+            kws = tuple([kw.lower().strip() for kw in item.get("keywords", [])])
+            prefs = item.get("prefixes", [])
+            prefix_map.append((kws, prefs))
+        return prefix_map
+    except Exception as e:
+        print(f"[ERROR] Failed to load specialties mapping file {filepath}: {e}")
+        return []
 
-    # E (13.01.10 / Elektromonter)
-    "\u044d": ["\u044d"],
-    "\u044d\u043b\u0435\u043a\u0442\u0440\u043e\u043c\u043e\u043d\u0442": ["\u044d"],
-    "\u044d\u043b\u0435\u043a\u0442\u0440\u043e\u043e\u0431\u043e\u0440\u0443\u0434\u043e\u0432\u0430\u043d\u0438\u044f": ["\u044d"],
-    "13.01.10": ["\u044d"],
-
-    # FK (49.02.01 / Fizicheskaya kultura)
-    "\u0444\u043a": ["\u0444\u043a"],
-    "\u0444\u0438\u0437\u0438\u0447\u0435\u0441\u043a": ["\u0444\u043a"],
-    "49.02.01": ["\u0444\u043a"],
-
-    # DO (44.02.01 / Doshkolnoe obrazovanie)
-    "\u0434\u043e": ["\u0434\u043e"],
-    "\u0434\u043e\u0448\u043a\u043e\u043b\u044c\u043d": ["\u0434\u043e"],
-    "44.02.01": ["\u0434\u043e"],
-
-    # SD (34.02.01 / Sestrinskoe delo)
-    "\u0441\u0434": ["\u0441\u0434"],
-    "\u0441\u0435\u0441\u0442\u0440\u0438\u043d\u0441\u043a": ["\u0441\u0434"],
-    "34.02.01": ["\u0441\u0434"],
-
-    # U (40.02.04 / Yurisprudenciya)
-    "\u044e": ["\u044e"],
-    "\u044e\u0440\u0438\u0441\u043f\u0440\u0443\u0434": ["\u044e"],
-    "40.02.04": ["\u044e"],
-
-    # PD / PSO (40.02.01 / 40.02.02 / Pravo i organizaciya)
-    "\u043f\u0441\u043e": ["\u043f\u0441\u043e"],
-    "\u043f\u0440\u0430\u0432\u043e \u0438 \u043e\u0440\u0433\u0430\u043d\u0438\u0437\u0430\u0446\u0438\u044f": ["\u043f\u0441\u043e"],
-    "\u0441\u043e\u0446\u0438\u0430\u043b\u044c\u043d\u043e\u0433\u043e \u043e\u0431\u0435\u0441\u043f\u0435\u0447\u0435\u043d\u0438\u044f": ["\u043f\u0441\u043e"],
-    "\u043f\u0434": ["\u043f\u0434"],
-    "\u043f\u0440\u0430\u0432\u043e\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u0435\u043b\u044c\u043d": ["\u043f\u0434"],
-    "40.02.01": ["\u043f\u0441\u043e"],
-    "40.02.02": ["\u043f\u0434"],
-
-    # MMR (15.01.32 / Mekhatronika)
-    "\u043c\u043c\u0440": ["\u043c\u043c\u0440"],
-    "\u043c\u0440": ["\u043c\u043c\u0440"],
-    "\u043c\u0435\u0445\u0430\u0442\u0440\u043e\u043d": ["\u043c\u043c\u0440"],
-    "\u0440\u043e\u0431\u043e\u0442\u043e\u0442\u0435\u0445\u043d\u0438\u043a\u0438": ["\u043c\u043c\u0440"],
-    "15.01.32": ["\u043c\u043c\u0440"],
-
-    # PK (43.01.09 / Povar, konditer)
-    "\u043f\u043a": ["\u043f\u043a"],
-    "\u043f\u043e\u0432\u0430\u0440": ["\u043f\u043a"],
-    "\u043a\u043e\u043d\u0434\u0438\u0442\u0435\u0440": ["\u043f\u043a"],
-
-    # BU (38.02.01 / Ekonomika)
-    "\u0431\u0443": ["\u0431\u0443"],
-    "\u044d\u043a\u043e\u043d\u043e\u043c\u0438\u043a": ["\u0431\u0443"],
-    "\u0431\u0443\u0445\u0433\u0430\u043b\u0442\u0435\u0440": ["\u0431\u0443"],
-    "38.02.01": ["\u0431\u0443"],
-
-    # LAB (18.01.34)
-    "\u043b\u0430\u0431": ["\u043b\u0430\u0431"],
-    "\u043b\u0430\u0431\u043e\u0440\u0430\u043d\u0442": ["\u043b\u0430\u0431"],
-
-    # MI (18.01.08 / Master)
-    "\u043c\u0438": ["\u043c\u0438"],
-    "\u0441\u0442\u0435\u043a\u043b": ["\u043c\u0438"],
-}
+SPECIALTY_PREFIX_MAP = load_specialty_prefix_map()
 
 REGION_MAP = {
     "\u0432\u043b\u0430\u0434\u0438\u043c\u0438\u0440": "33",
@@ -311,14 +245,11 @@ def get_town_type_id(address, region_id="33"):
         return "4"
     if str(region_id) in ["77", "78", "92"]:
         return "1"
-    a_lower = address.lower()
-    if "\u0433." in a_lower or "\u0433 " in a_lower or "\u0433\u043e\u0440\u043e\u0434" in a_lower:
+
+    if re.search(r" \u0433 | \u0433\.|^\u0433\.|^\u0433 ", address, re.IGNORECASE) or "\u0433\u043e\u0440\u043e\u0434" in address.lower():
         return "2"
-    elif "\u043f\u0433\u0442" in a_lower or "\u043f\u043e\u0441\u0435\u043b\u043e\u043a" in a_lower:
-        return "3"
-    elif "\u0434." in a_lower or "\u0434\u0435\u0440\u0435\u0432\u043d\u044f" in a_lower or "\u0441." in a_lower or "\u0441\u0435\u043b\u043e" in a_lower:
-        return "4"
-    return "2"
+
+    return "4"
 
 def refresh_session_auth(session, target_url):
     print("[AUTH] Warming up session and refreshing access token...")
@@ -352,152 +283,173 @@ def refresh_session_auth(session, target_url):
     return access_token
 
 def auto_discover_campaign_params(session, target_url, headers_json):
-    print("\n[AUTO-DISCOVERY] Requesting GetDataForApplicationsList to discover Campaign & Institution parameters...")
     discovered = {
         "campaign_id": None,
-        "institution_id": 6982,
+        "institution_id": None,
         "competitive_groups": {}
     }
 
-    get_data_urls = [
-        target_url + "/InstitutionApplication/GetDataForApplicationsList",
-        target_url + "/Application/GetDataForApplicationsList"
-    ]
+    camp_id = os.getenv("FIS_CAMPAIGN_ID")
+    if not camp_id:
+        print("[ERROR] FIS_CAMPAIGN_ID is not configured in environment!")
+        return discovered
 
-    for url in get_data_urls:
+    discovered["campaign_id"] = str(camp_id).strip()
+    c_id_int = int(discovered["campaign_id"])
+
+    env_inst_id = os.getenv("FIS_INSTITUTION_ID")
+    if env_inst_id:
         try:
-            r1 = session.post(url, json={}, headers=headers_json, timeout=10)
-            if r1.status_code == 200 and r1.text.startswith('{'):
-                j1 = r1.json()
-                data1 = j1.get("Data") or j1
-                
-                inst_id = data1.get("InstitutionID") or data1.get("InstitutionId") or j1.get("InstitutionId")
+            discovered["institution_id"] = int(env_inst_id)
+        except ValueError:
+            pass
+
+    if not discovered["institution_id"]:
+        try:
+            r_camp = session.post(target_url + "/Application/GetCampaignById", json={"campaignId": str(c_id_int)}, headers=headers_json, timeout=10)
+            if r_camp.status_code == 200 and r_camp.text.startswith('{'):
+                j_camp = r_camp.json()
+                data_camp = j_camp.get("Data") or {}
+                inst_id = data_camp.get("InstitutionID") or data_camp.get("InstitutionId")
                 if inst_id:
                     discovered["institution_id"] = int(inst_id)
+                    print(f"[CONFIG] Discovered InstitutionID = {discovered['institution_id']} via GetCampaignById")
+        except Exception as e:
+            print(f"[WARNING] GetCampaignById failed: {e}")
 
-                campaign_list = data1.get("CampaignData") or j1.get("CampaignData") or []
-                if isinstance(campaign_list, list) and len(campaign_list) > 0:
-                    latest_campaign = campaign_list[-1]
-                    c_id = latest_campaign.get("Id") or latest_campaign.get("CampaignID")
-                    c_name = latest_campaign.get("Name", "")
-                    if c_id:
-                        discovered["campaign_id"] = str(c_id)
-                        print("[AUTO-DISCOVERY SUCCESS] Extracted latest campaign from CampaignData: CampaignID = " + str(discovered["campaign_id"]) + " ('" + str(c_name) + "'), InstitutionID = " + str(discovered["institution_id"]))
-                        break
+    if not discovered["institution_id"]:
+        print("[ERROR] InstitutionID is missing!")
+        return discovered
+
+    print(f"[CONFIG] Active CampaignID = {discovered['campaign_id']}, InstitutionID = {discovered['institution_id']}")
+
+    try:
+        payload_cg = {
+            "CampaignID": c_id_int,
+            "EducationLevelID": "17",
+            "InstitutionID": int(discovered["institution_id"])
+        }
+        r_cg = session.post(target_url + "/CompetitiveGroup/GetCompetitiveGroupsByCampaign", json=payload_cg, headers=headers_json, timeout=10)
+        if r_cg.status_code == 200 and r_cg.text.startswith('{'):
+            j_cg = r_cg.json()
+            cg_list = j_cg.get("Data") or []
+            if isinstance(cg_list, list) and len(cg_list) > 0:
+                dynamic_cg = {}
+                for item in cg_list:
+                    cg_id = str(item.get("ID") or item.get("CompetitiveGroupID") or "")
+                    cg_name = item.get("Name") or ""
+                    if cg_id and cg_name:
+                        dynamic_cg[cg_name] = cg_id
+                        dynamic_cg[cg_name.lower()] = cg_id
+
+                        prefix = re.sub(r'[\d\-]+$', '', cg_name.lower()).rstrip("\u0437").strip()
+                        if prefix and prefix not in dynamic_cg:
+                            dynamic_cg[prefix] = cg_id
+                            dynamic_cg[prefix.lower()] = cg_id
+
+                discovered["competitive_groups"] = dynamic_cg
+                print(f"[SUCCESS] Dynamically loaded {len(cg_list)} Competitive Groups from FIS GIA server.")
+                for item in cg_list:
+                    print("   - Server Group: " + str(item.get("Name")) + " -> ID: " + str(item.get("ID")))
             else:
-                print(f"[AUTO-DISCOVERY WARNING] {url} returned HTTP {r1.status_code}: {r1.text[:200]}")
-        except Exception as e:
-            print("[AUTO-DISCOVERY DEBUG] " + str(url) + " failed: " + str(e))
+                print(f"[ERROR] GetCompetitiveGroupsByCampaign returned no groups: {r_cg.text[:150]}")
+        else:
+            print(f"[ERROR] GetCompetitiveGroupsByCampaign failed (HTTP {r_cg.status_code}): {r_cg.text[:150]}")
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch competitive groups: {e}")
 
-    if discovered["campaign_id"]:
-        try:
-            payload_cg = {
-                "CampaignID": int(discovered["campaign_id"]),
-                "EducationLevelID": "17",
-                "InstitutionID": int(discovered["institution_id"] or 6982)
-            }
-            r2 = session.post(target_url + "/CompetitiveGroup/GetCompetitiveGroupsByCampaign", json=payload_cg, headers=headers_json, timeout=10)
-            if r2.status_code == 200 and r2.text.startswith('{'):
-                j2 = r2.json()
-                cg_list = j2.get("Data") or []
-                if isinstance(cg_list, list) and len(cg_list) > 0:
-                    dynamic_cg = {}
-                    for item in cg_list:
-                        cg_id = str(item.get("ID") or item.get("CompetitiveGroupID") or "")
-                        cg_name = item.get("Name") or ""
-                        if cg_id and cg_name:
-                            dynamic_cg[cg_name] = cg_id
-                            dynamic_cg[cg_name.lower()] = cg_id
-                            
-                            prefix = re.sub(r'[\d\-]+$', '', cg_name.lower()).rstrip("\u0437").strip()
-                            if prefix and prefix not in dynamic_cg:
-                                dynamic_cg[prefix] = cg_id
-                                dynamic_cg[prefix.lower()] = cg_id
+    try:
+        payload_ai = {"campaignID": c_id_int}
+        r3 = session.post(target_url + "/Application/GetAdmissionItemTypeByCampaign", json=payload_ai, headers=headers_json, timeout=10)
+        if r3.status_code == 200:
+            print("[SUCCESS] Admission Item Types retrieved.")
+    except Exception as e:
+        print("[WARNING] GetAdmissionItemTypeByCampaign failed: " + str(e))
 
-                    discovered["competitive_groups"] = dynamic_cg
-                    print("[AUTO-DISCOVERY SUCCESS] Loaded " + str(len(cg_list)) + " Competitive Groups dynamically from server:")
-                    for item in cg_list:
-                        print("   - Server Group: " + str(item.get("Name")) + " -> ID: " + str(item.get("ID")))
-            else:
-                print(f"[AUTO-DISCOVERY WARNING] GetCompetitiveGroupsByCampaign returned HTTP {r2.status_code}: {r2.text[:200]}")
-        except Exception as e:
-            print("[AUTO-DISCOVERY WARNING] GetCompetitiveGroupsByCampaign failed: " + str(e))
-
-        try:
-            payload_ai = {"campaignID": int(discovered["campaign_id"])}
-            r3 = session.post(target_url + "/Application/GetAdmissionItemTypeByCampaign", json=payload_ai, headers=headers_json, timeout=10)
-            if r3.status_code == 200:
-                print("[AUTO-DISCOVERY SUCCESS] Admission Item Types retrieved.")
-        except Exception as e:
-            print("[AUTO-DISCOVERY WARNING] GetAdmissionItemTypeByCampaign failed: " + str(e))
-
-    # FALLBACK PROTECTION:
     if not discovered.get("campaign_id") or not discovered.get("competitive_groups"):
-        print("[AUTO-DISCOVERY FALLBACK] Dynamic discovery incomplete. Applying default fallback parameters (CampaignID = 42837, InstitutionID = 6982)...")
-        discovered["campaign_id"] = discovered.get("campaign_id") or "42837"
-        discovered["institution_id"] = discovered.get("institution_id") or 6982
-        if not discovered.get("competitive_groups"):
-            discovered["competitive_groups"] = {
-                "\u0414\u041e21": "2066315", "\u0434\u043e21": "2066315", "\u0434\u043e": "2066315",
-                "\u041c\u041821": "2066323", "\u043c\u043821": "2066323", "\u043c\u0438": "2066323",
-                "\u041c\u041c\u042021": "2065764", "\u043c\u043c\u044021": "2065764", "\u043c\u043c\u0440": "2065764",
-                "\u041c\u041c\u042121": "2066321", "\u043c\u043c\u044121": "2066321", "\u043c\u043c\u0441": "2066321",
-                "\u041f\u041a21": "2066322", "\u043f\u043a21": "2066322", "\u043f\u043a": "2066322",
-                "\u041f\u0421\u041e21": "2066325", "\u043f\u0441\u043e21": "2066325", "\u043f\u0441\u043e": "2066325",
-                "\u0421\u041221": "2066319", "\u0441\u043221": "2066319", "\u0441\u0432": "2066319",
-                "\u0424\u041a21": "2066309", "\u0444\u043a21": "2066309", "\u0444\u043a": "2066309",
-                "\u042d21": "2066316", "\u044d21": "2066316", "\u044d": "2066316"
-            }
+        print("[ERROR] Dynamic discovery incomplete: Campaign ID or Competitive Groups could not be retrieved from FIS GIA server!")
 
     return discovered
+
+def extract_numeric_suffix(name):
+    m = re.search(r'\d+', str(name))
+    return int(m.group(0)) if m else 0
 
 def resolve_competitive_group_ids_with_names(spec_name, dynamic_cg_map):
     if not spec_name or not dynamic_cg_map:
         return [], []
 
-    spec_raw = str(spec_name).strip()
-    spec_lower = spec_raw.lower()
-    matched_ids = []
-    matched_names = []
+    spec_lower = str(spec_name).strip().lower()
 
-    target_tags = set()
-    for kw, tags in ALIAS_KEYWORD_GROUPS.items():
-        if kw in spec_lower:
-            for t in tags:
-                clean_tag = re.sub(r'[\d\-]+$', '', t.lower().strip()).rstrip("\u0437").strip()
-                if clean_tag:
-                    target_tags.add(clean_tag)
+    target_prefixes = []
+    for keywords, prefixes in SPECIALTY_PREFIX_MAP:
+        if any(kw in spec_lower for kw in keywords):
+            for p in prefixes:
+                if p not in target_prefixes:
+                    target_prefixes.append(p)
+            break
 
-    if not target_tags:
+    if not target_prefixes:
         return [], []
 
-    for cg_name, cg_id in dynamic_cg_map.items():
-        if cg_name.islower() and any(k.isupper() for k in dynamic_cg_map.keys() if dynamic_cg_map[k] == cg_id):
-            continue
+    matched_pairs = []
 
-        cg_lower = cg_name.lower().strip()
-        cg_prefix = re.sub(r'[\d\-]+$', '', cg_lower).strip()
-        cg_prefix_no_z = cg_prefix.rstrip("\u0437").strip()
+    for pref_idx, pref in enumerate(target_prefixes):
+        pref_clean = pref.upper().strip()
 
-        # Strict exact match only! No partial substring matching!
-        if any(tag == cg_prefix or tag == cg_prefix_no_z for tag in target_tags):
-            if cg_id not in matched_ids:
-                matched_ids.append(cg_id)
-                matched_names.append(cg_name)
+        pref_base_match = re.search(r'^[A-Z\u0410-\u044f\u0401\u0451]+', pref_clean)
+        pref_base = pref_base_match.group(0) if pref_base_match else pref_clean
+
+        for cg_name, cg_id in dynamic_cg_map.items():
+            cg_clean = str(cg_name).upper().strip()
+
+            cg_base_match = re.search(r'^[A-Z\u0410-\u044f\u0401\u0451]+', cg_clean)
+            cg_base = cg_base_match.group(0) if cg_base_match else ""
+
+            is_match = False
+
+            if "-" in pref_clean or (any(c.isdigit() for c in pref_clean) and len(pref_clean) > len(pref_base)):
+                if cg_clean == pref_clean or cg_clean.startswith(pref_clean + "-") or cg_clean.startswith(pref_clean):
+                    is_match = True
+            else:
+                if cg_base == pref_base:
+                    is_match = True
+
+            if is_match:
+                if not any(item[3] == cg_id for item in matched_pairs):
+                    num = extract_numeric_suffix(cg_clean)
+                    matched_pairs.append((pref_idx, num, cg_name, cg_id))
+
+    matched_pairs.sort(key=lambda x: (x[0], x[1]))
+
+    matched_ids = [item[3] for item in matched_pairs]
+    matched_names = [item[2] for item in matched_pairs]
 
     return matched_ids, matched_names
 
 def submit_single_application(s, target_url, headers_json, data, discovered_config):
-    campaign_id = discovered_config["campaign_id"]
-    institution_id = discovered_config["institution_id"] or 6982
-    dynamic_cg_map = discovered_config["competitive_groups"]
+    campaign_id = discovered_config.get("campaign_id")
+    institution_id = discovered_config.get("institution_id")
+    dynamic_cg_map = discovered_config.get("competitive_groups") or {}
 
     last_name = data.get("last_name", "")
     first_name = data.get("first_name", "")
     middle_name = data.get("middle_name", "")
-    app_num = data.get("application_number", DEFAULT_SETTINGS["default_app_number"])
+    app_num = data.get("application_number", "")
     passport_series = data.get("passport_series", "")
     passport_number = data.get("passport_number", "")
+
+    if not campaign_id or not dynamic_cg_map:
+        err_msg = "Application Submission Failed! Dynamic discovery incomplete: missing CampaignID or Competitive Groups from FIS GIA server."
+        print("\n[CRITICAL ERROR] " + err_msg)
+        print("   -> Application #" + str(app_num) + " SKIPPED. NewWz0 was NOT called.")
+        return {
+            "application_number": app_num,
+            "passport_series": passport_series,
+            "passport_number": passport_number,
+            "status": "ERROR_DISCOVERY_FAILED",
+            "message": err_msg
+        }
 
     reg_address = data.get("reg_address_full", "")
     region_id = get_region_id(reg_address)
@@ -518,10 +470,11 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
     seen_cg_ids = set()
     priorities_list = []
     matched_specialties_count = 0
+    unmatched_specialties = []
 
     print("[SPECIALTY MATCHING] Matching " + str(requested_count) + " requested specialty/specialities against server competitive groups...")
     for idx, spec in enumerate(requested_specialties, start=1):
-        spec_name = spec.get("speciality_name", "")
+        spec_name = spec.get("speciality_name", "") if isinstance(spec, dict) else str(spec)
         m_ids, m_names = resolve_competitive_group_ids_with_names(spec_name, dynamic_cg_map)
         
         if m_ids:
@@ -530,28 +483,32 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
             for cg_id in m_ids:
                 if cg_id not in seen_cg_ids:
                     seen_cg_ids.add(cg_id)
+                    is_budget = spec.get("regional_budget_study_type_check") if isinstance(spec, dict) else True
                     priorities_list.append({
                         "CompetitiveGroupId": str(cg_id),
                         "EducationFormId": "11",
-                        "EducationSourceId": "14" if spec.get("regional_budget_study_type_check") else "15",
+                        "EducationSourceId": "14" if is_budget else "15",
                         "IsForSPOandVO": False
                     })
         else:
+            unmatched_specialties.append(spec_name)
             print("   [MATCH FAILURE] Could NOT match specialty: '" + str(spec_name) + "'!")
 
     if len(priorities_list) == 0:
-        err_msg = f"Specialty Matching Failed! None of the {requested_count} requested specialty/specialties matched valid competitive groups in FIS GIA."
+        err_msg = f"Specialty Matching Failed! 0 of {requested_count} requested specialties matched valid competitive groups in FIS GIA."
         print("\n[CRITICAL ERROR] " + err_msg)
         print("   -> Application #" + str(app_num) + " SKIPPED. NewWz0 was NOT called.")
         return {
             "application_number": app_num,
             "passport_series": passport_series,
             "passport_number": passport_number,
-            "status": "SKIPPED_UNMATCHED_SPECIALTY",
+            "status": "ERROR_UNMATCHED_SPECIALTY",
             "message": err_msg
         }
-    elif matched_specialties_count < requested_count:
-        print(f"\n[SPECIALTY MATCHING WARNING] Requested {requested_count} specialty/specialties, but matched {matched_specialties_count}. Proceeding with {len(priorities_list)} matched competitive group(s)...")
+
+    is_partial_success = (matched_specialties_count < requested_count)
+    if is_partial_success:
+        print(f"\n[SPECIALTY MATCHING WARNING] Partial match: {matched_specialties_count} of {requested_count} specialties matched. Unmatched: {unmatched_specialties}")
 
     selected_cg_ids = [p["CompetitiveGroupId"] for p in priorities_list]
 
@@ -798,13 +755,24 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
     res5 = s.post(target_url + "/Application/SaveWz5", json=wz5_payload, headers=headers_json)
     print(f"[DEBUG] Step 4 SaveWz5 HTTP Status: {res5.status_code}, Response: {res5.text[:200]}")
 
-    print(f"\n[APPLICATION SUCCESS] Application {app_num} registered successfully in FIS GIA with ID {app_id}!")
+    if is_partial_success:
+        final_status = "PARTIAL_SUCCESS"
+        final_msg = f"Application registered with PARTIAL SUCCESS (matched {matched_specialties_count} of {requested_count} competitive groups). Unmatched: {unmatched_specialties}"
+    else:
+        final_status = "CREATED"
+        final_msg = f"Application registered successfully in FIS GIA with ID {app_id}"
+
+    print(f"\n[APPLICATION {final_status}] Application {app_num}: {final_msg}")
     return {
         "application_number": str(app_num),
         "passport_series": str(passport_series),
         "passport_number": str(passport_number),
-        "status": "CREATED",
-        "message": f"Application registered successfully with ID {app_id}"
+        "status": final_status,
+        "message": final_msg,
+        "fis_application_id": app_id,
+        "matched_groups_count": matched_specialties_count,
+        "total_requested_count": requested_count,
+        "unmatched_specialties": unmatched_specialties
     }
 
 def run_fis_submission(json_file=None):
@@ -814,7 +782,8 @@ def run_fis_submission(json_file=None):
     log_filename = os.path.join(server_dir, f"log_{now_str}.txt")
     response_filename = os.path.join(server_dir, f"response_{now_str}.json")
 
-    sys.stdout = LoggerWriter(log_filename)
+    global SPECIALTY_PREFIX_MAP
+    SPECIALTY_PREFIX_MAP = load_specialty_prefix_map()
 
     if not json_file:
         if len(sys.argv) > 1 and sys.argv[1].endswith(".json"):
