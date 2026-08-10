@@ -107,6 +107,18 @@ def fetch_and_export_applications():
     if rows:
         for idx, row in enumerate(rows, start=1):
             decl_id = row.get("id") or row.get("declaration_id")
+            
+            status_obj = row.get("status")
+            status_name = ""
+            if isinstance(status_obj, dict):
+                status_name = str(status_obj.get("name") or "").strip().lower()
+            elif isinstance(status_obj, str):
+                status_name = status_obj.strip().lower()
+
+            if status_name == "\u043e\u0442\u043a\u043b\u043e\u043d\u0435\u043d\u043e":
+                print(f"[CLIENT] [{idx}/{len(rows)}] Skipping declaration ID={decl_id}: Status is '{status_name}'")
+                continue
+
             print(f"[CLIENT] [{idx}/{len(rows)}] Processing declaration ID={decl_id}...")
 
             # Query edit window JS/HTML details
@@ -121,6 +133,18 @@ def fetch_and_export_applications():
                     raw_fields.update(client.parse_extjs_js(raw_text))
             elif isinstance(edit_res, str):
                 raw_fields.update(client.parse_extjs_js(edit_res))
+
+            raw_status_obj = raw_fields.get("status")
+            raw_status_name = ""
+            if isinstance(raw_status_obj, dict):
+                raw_status_name = str(raw_status_obj.get("name") or "").strip().lower()
+            elif isinstance(raw_status_obj, str):
+                raw_status_name = raw_status_obj.strip().lower()
+
+            full_status_name = raw_status_name or status_name
+            if full_status_name == "\u043e\u0442\u043a\u043b\u043e\u043d\u0435\u043d\u043e":
+                print(f"[CLIENT] [{idx}/{len(rows)}] Skipping declaration ID={decl_id}: Status is '{full_status_name}'")
+                continue
 
             # Query enrollee details if enrollee ID is available
             enrollee_id = row.get("enrollee_id") or row.get("enrollee") or raw_fields.get("enrollee_id")

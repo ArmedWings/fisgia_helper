@@ -482,12 +482,12 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
     region_id = get_region_id(reg_address)
     town_type_id = get_town_type_id(reg_address, region_id)
 
-    masked_initials = (last_name[:1] + "." if last_name else "") + (first_name[:1] + "." if first_name else "") + (middle_name[:1] + "." if middle_name else "")
+    full_fio = " ".join(filter(None, [last_name, first_name, middle_name]))
     print("\n-----------------------------------------------------------------")
     print("   PROCESSING APPLICATION FOR FIS GIA")
     print("   Campaign ID: " + str(campaign_id) + ", Institution ID: " + str(institution_id))
     print("   Application No: " + str(app_num))
-    print("   Applicant Initials: " + str(masked_initials))
+    print("   Applicant Name: " + str(full_fio))
     print("   Region ID: " + str(region_id) + ", Town Type ID: " + str(town_type_id))
     print("-----------------------------------------------------------------")
 
@@ -583,7 +583,9 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
     if j0.get("IsError"):
         err_msg = str(j0.get("Message") or "Error in NewWz0")
         print("[NEWWZ0 RESPONSE ERROR] " + err_msg)
-        return {"application_number": app_num, "passport_series": passport_series, "passport_number": passport_number, "status": "ERROR", "message": err_msg}
+        is_num_in_use = ("\u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u0442\u0441\u044f" in err_msg.lower() or "\u043d\u043e\u043c\u0435\u0440" in err_msg.lower() or "already" in err_msg.lower())
+        status_code = "ERROR_APP_NUMBER_EXISTS" if is_num_in_use else "ERROR"
+        return {"application_number": app_num, "passport_series": passport_series, "passport_number": passport_number, "status": status_code, "message": err_msg}
 
     data0 = j0.get("Data") if isinstance(j0.get("Data"), dict) else j0
     app_id = extract_id(data0, "ApplicationID", "ApplicationId", "id") or extract_id(j0, "ApplicationID", "ApplicationId", "id")
@@ -591,18 +593,77 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
     entrant_is_new = data0.get("EntrantIsNew") if isinstance(data0, dict) else j0.get("EntrantIsNew")
 
     if not app_id or app_id == 0 or entrant_is_new is False:
-        msg = "Entrant or Application already exists in FIS GIA (EntrantIsNew = False)"
-        if app_id and int(app_id) > 0:
-            print("[ALREADY EXISTS] Application #" + str(app_num) + " already exists in FIS GIA (EntrantIsNew = False, ApplicationID = " + str(app_id) + "). Deleting draft application...")
-            try:
-                del_res = s.post(target_url + "/InstitutionApplication/DeleteApplications", json={"applicationId": [int(app_id)]}, headers=headers_json)
-                print(f"   [DELETED DRAFT] Deleted draft ApplicationID {app_id} (HTTP {del_res.status_code}: {del_res.text[:150]})")
-            except Exception as del_err:
-                print(f"   [WARNING] Failed to delete draft ApplicationID {app_id}: {del_err}")
-        else:
-            print("[ALREADY EXISTS] Application #" + str(app_num) + " already exists in FIS GIA (EntrantIsNew = False). Skipping further processing.")
+        has_existing_app = False
+        existing_app_info = None
 
-        return {"application_number": app_num, "passport_series": passport_series, "passport_number": passport_number, "status": "ALREADY_EXISTS", "message": msg}
+        if passport_series and passport_number:
+            print(f"[CHECK EXISTING APP] EntrantIsNew = False for passport {passport_series} {passport_number}. Querying LoadApplicationNewRecords...")
+            search_payload = {
+                "Filter": {
+                    "ApplicationNumber": "",
+                    "OriginalDocumentsReceived": None,
+                    "LastName": "",
+                    "FirstName": None,
+                    "MiddleName": None,
+                    "SelectedViolationType": None,
+                    "Order": None,
+                    "RegistrationDateFrom": None,
+                    "RegistrationDateTo": None,
+                    "SelectedCompetitiveGroup": None,
+                    "DocumentSeries": str(passport_series),
+                    "DocumentNumber": str(passport_number),
+                    "UID": None,
+                    "CampaignYear": datetime.now().year,
+                    "SelectedBenefitId": 0,
+                    "SelectedCampaignId": int(campaign_id) if (campaign_id and str(campaign_id).isdigit()) else None,
+                    "SelectedEducationFormType": None,
+                    "SelectedEducationSourceType": None,
+                    "SNILS": None
+                },
+                "Pager": {
+                    "PageSize": 10,
+                    "CurrentPage": 1,
+                    "TotalRecords": 1,
+                    "TotalPages": 1,
+                    "FirstRecordOffset": 1,
+                    "LastRecordOffset": 10
+                },
+                "Sort": {
+                    "SortDescending": True,
+                    "SortKey": "RegistrationDate"
+                }
+            }
+
+            try:
+                r_search = s.post(target_url + "/InstitutionApplication/LoadApplicationNewRecords", json=search_payload, headers=headers_json)
+                if r_search.status_code == 200:
+                    j_search = r_search.json()
+                    records = j_search.get("Records", []) if isinstance(j_search, dict) else []
+                    if records and len(records) > 0:
+                        for rec in records:
+                            found_app_id = rec.get("ApplicationId") or rec.get("ApplicationID")
+                            if found_app_id and int(found_app_id) > 0:
+                                has_existing_app = True
+                                existing_app_info = rec
+                                break
+            except Exception as search_err:
+                print(f"   [WARNING] Failed to query LoadApplicationNewRecords: {search_err}")
+
+        if has_existing_app or not app_id or app_id == 0:
+            existing_num = existing_app_info.get("ApplicationNumber") if existing_app_info else "N/A"
+            existing_id = existing_app_info.get("ApplicationId") if existing_app_info else "N/A"
+            msg = f"Entrant already has an application in FIS GIA (Application #{existing_num}, ID {existing_id})"
+            print(f"[ALREADY EXISTS] {msg}. Deleting draft application {app_id}...")
+            if app_id and int(app_id) > 0:
+                try:
+                    del_res = s.post(target_url + "/InstitutionApplication/DeleteApplications", json={"applicationId": [int(app_id)]}, headers=headers_json)
+                    print(f"   [DELETED DRAFT] Deleted draft ApplicationID {app_id} (HTTP {del_res.status_code}: {del_res.text[:150]})")
+                except Exception as del_err:
+                    print(f"   [WARNING] Failed to delete draft ApplicationID {app_id}: {del_err}")
+
+            return {"application_number": app_num, "passport_series": passport_series, "passport_number": passport_number, "status": "ALREADY_EXISTS", "message": msg}
+
+        print(f"[NEW APPLICATION FOR EXISTING ENTRANT] EntrantIsNew = False, but NO application found in current campaign for passport {passport_series} {passport_number}. Continuing submission with draft ApplicationID {app_id}...")
 
     print("[SUCCESS] Step 1 created ApplicationID: " + str(app_id))
 
@@ -930,6 +991,8 @@ def run_fis_submission(json_file=None):
     id_suffix_val = os.getenv("ID_SUFFIX", "-26")
     current_app_counter = id_start_val
 
+    abort_batch = False
+
     # Batch Processing Loop with CONTINUE ON ERROR
     for idx, app_data in enumerate(applications_list, start=1):
         raw_app_num = str(app_data.get("application_number") or app_data.get("app_number") or "").strip()
@@ -947,30 +1010,64 @@ def run_fis_submission(json_file=None):
             print(f"   [BATCH {idx}/{len(applications_list)}] Submitting Application #{app_num} (Provided from input data)")
             print(f"=================================================================")
 
-        try:
-            res = submit_single_application(s, target_url, headers_json, app_data, discovered_config)
-            summary_responses.append(res)
+        max_retries = 5
+        res = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                res = submit_single_application(s, target_url, headers_json, app_data, discovered_config)
+                res_status = res.get("status")
 
-            res_status = res.get("status")
-            if res_status in ["CREATED", "PARTIAL_SUCCESS"]:
-                if not raw_app_num:
-                    current_app_counter += 1
-            elif res_status in ["ALREADY_EXISTS", "ERROR_UNMATCHED_SPECIALTY"]:
-                if not raw_app_num:
-                    print(f"   [COUNTER RE-USE] Keeping counter at {current_app_counter} for next entrant.")
-        except Exception as e:
-            print(f"[EXCEPTION ERROR] Failed to submit application #{app_num}: {e}")
-            summary_responses.append({
-                "application_number": str(app_num),
-                "passport_series": str(app_data.get("passport_series", "")),
-                "passport_number": str(app_data.get("passport_number", "")),
-                "status": "ERROR",
-                "message": f"Execution Exception: {str(e)}"
-            })
+                if res_status == "ERROR_APP_NUMBER_EXISTS":
+                    if idx == 1 and attempt == 1:
+                        print("\n=================================================================")
+                        print(f"[CRITICAL ABORT] Starting application number '{app_num}' is already in use on FIS GIA server!")
+                        print("   -> Please select a different starting application number (ID_START) in your dev.env / prod.env file and restart.")
+                        print("=================================================================")
+                        summary_responses.append(res)
+                        abort_batch = True
+                        break
+
+                    if attempt < max_retries and not raw_app_num:
+                        current_app_counter += 1
+                        assigned_app_num = f"{current_app_counter}{id_suffix_val}"
+                        app_data["application_number"] = assigned_app_num
+                        app_num = assigned_app_num
+                        print(f"   [RETRY {attempt}/{max_retries}] Application number in use. Advancing counter to {current_app_counter} ({assigned_app_num}) and retrying...")
+                        time.sleep(1.0)
+                        continue
+                    elif attempt == max_retries:
+                        print(f"\n[CRITICAL ERROR] Failed to find available application number after {max_retries} retries for batch item #{idx}.")
+                        summary_responses.append(res)
+                        abort_batch = True
+                        break
+
+                summary_responses.append(res)
+                if res_status in ["CREATED", "PARTIAL_SUCCESS"]:
+                    if not raw_app_num:
+                        current_app_counter += 1
+                elif res_status in ["ALREADY_EXISTS", "ERROR_UNMATCHED_SPECIALTY"]:
+                    if not raw_app_num:
+                        print(f"   [COUNTER RE-USE] Keeping counter at {current_app_counter} for next entrant.")
+                break
+
+            except Exception as e:
+                print(f"[EXCEPTION ERROR] Failed to submit application #{app_num}: {e}")
+                res = {
+                    "application_number": str(app_num),
+                    "passport_series": str(app_data.get("passport_series", "")),
+                    "passport_number": str(app_data.get("passport_number", "")),
+                    "status": "ERROR",
+                    "message": f"Execution Exception: {str(e)}"
+                }
+                summary_responses.append(res)
+                break
+
+        if abort_batch:
+            break
 
         # Safety rate-limiting delay between applications to avoid HTTP 429 / server block
         if idx < len(applications_list):
-            time.sleep(0.7)
+            time.sleep(1.5)
 
     # Write summary response JSON
     with open(response_filename, "w", encoding="utf-8") as f:
