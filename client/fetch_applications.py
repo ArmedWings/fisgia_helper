@@ -95,8 +95,39 @@ def fetch_and_export_applications():
             period_id = 41
             print(f"[CLIENT WARNING] Could not fetch periods list. Falling back to default period_id: {period_id}")
 
+    # Read filter and sorting parameters from env
+    filter_text = (os.getenv('BARS_FILTER') or os.getenv('filter') or '').strip()
+    filter_1 = (os.getenv('BARS_FILTER_1') or os.getenv('filter_1') or '').strip()
+    filter_2 = (os.getenv('BARS_FILTER_2') or os.getenv('filter_2') or '').strip()
+
+    sort_env = os.getenv('BARS_SORT') if 'BARS_SORT' in os.environ else os.getenv('sort')
+    sort_val = sort_env.strip() if sort_env is not None else 'date'
+
+    dir_env = os.getenv('BARS_DIR') if 'BARS_DIR' in os.environ else os.getenv('dir')
+    dir_val = dir_env.strip() if dir_env is not None else 'DESC'
+
     print(f"[CLIENT] Fetching declarations list (start={start}, limit={limit}, period_id={period_id})...")
-    decl_res = client.get_declarations_list(period_id=period_id, start=start, limit=limit)
+    if filter_text:
+        print(f"   -> Filter (search): {filter_text}")
+    if filter_1:
+        print(f"   -> Filter 1 (start date): {filter_1}")
+    if filter_2:
+        print(f"   -> Filter 2 (end date): {filter_2}")
+    if sort_val:
+        print(f"   -> Sort: {sort_val}")
+    if dir_val:
+        print(f"   -> Dir: {dir_val}")
+
+    decl_res = client.get_declarations_list(
+        period_id=period_id,
+        start=start,
+        limit=limit,
+        sort=sort_val,
+        dir_order=dir_val,
+        filter_text=filter_text,
+        filter_1=filter_1,
+        filter_2=filter_2
+    )
 
     rows = decl_res.get("rows", []) if isinstance(decl_res, dict) else []
     print(f"[CLIENT] Server returned {len(rows)} declaration rows.")

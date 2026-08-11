@@ -8,6 +8,27 @@ import requests
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+def format_date_filter(val: str) -> str:
+    """
+    Converts date string from dd.mm.yyyy (or dd.mm.yyyy HH:MM:SS) to ISO format yyyy-mm-ddThh:mm:ss.
+    If already in ISO format or empty, returns as is.
+    """
+    if not val:
+        return ""
+    val = str(val).strip()
+    if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', val):
+        return val
+    m = re.match(r'^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{1,2}):(\d{1,2}))?$', val)
+    if m:
+        day, month, year, hh, mm, ss = m.groups()
+        day = day.zfill(2)
+        month = month.zfill(2)
+        hh = (hh or "00").zfill(2)
+        mm = (mm or "00").zfill(2)
+        ss = (ss or "00").zfill(2)
+        return f"{year}-{month}-{day}T{hh}:{mm}:{ss}"
+    return val
+
 class BarsClient:
     """
     Client for interacting with BARS.Education (M3 Platform API)
@@ -108,9 +129,19 @@ class BarsClient:
             return res
         return []
 
-    def get_declarations_list(self, period_id: int, start: int = 0, limit: int = 25) -> dict:
+    def get_declarations_list(
+        self,
+        period_id: int,
+        start: int = 0,
+        limit: int = 25,
+        sort: str = "date",
+        dir_order: str = "DESC",
+        filter_text: str = None,
+        filter_1: str = None,
+        filter_2: str = None
+    ) -> dict:
         """
-        Queries BARS declarations list filtered by period_id, limit, start:
+        Queries BARS declarations list filtered by period_id, limit, start, search filters, and sorting:
         POST /actions/declaration/objectrowsaction
         """
         payload = {
@@ -120,6 +151,21 @@ class BarsClient:
             'm3_window_id': 'cmp_266a9153',
             'grid_id': 'cmp_17688a62'
         }
+        if sort:
+            payload['sort'] = sort
+        if dir_order:
+            payload['dir'] = dir_order
+        if filter_text:
+            payload['filter'] = filter_text
+        if filter_1:
+            f1 = format_date_filter(filter_1)
+            if f1:
+                payload['filter_1'] = f1
+        if filter_2:
+            f2 = format_date_filter(filter_2)
+            if f2:
+                payload['filter_2'] = f2
+
         return self.execute_action("declaration", "objectrowsaction", payload)
 
     def get_declaration_plans(self, declaration_id: int, period_id: int = None, unit_id: int = None, finished_forms: int = 1, m3_window_id: str = "", grid_id: str = "") -> dict:
