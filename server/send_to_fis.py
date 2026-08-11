@@ -179,82 +179,71 @@ def extract_id(d, *keys):
     return None
 
 def get_entrant_id_from_server(s, target_url, headers_json, app_id, j0):
-    eid = extract_id(j0.get("Data"), "EntrantID", "EntrantId") or extract_id(j0, "EntrantID", "EntrantId")
-    pid = extract_id(j0.get("Data"), "EntrantDocumentID", "EntrantDocumentId", "IdentityDocumentID") or extract_id(j0, "EntrantDocumentID", "EntrantDocumentId", "IdentityDocumentID")
+    eid = extract_id(j0.get("Data") if isinstance(j0, dict) else {}, "EntrantID", "EntrantId") or extract_id(j0 if isinstance(j0, dict) else {}, "EntrantID", "EntrantId")
+    pid = extract_id(j0.get("Data") if isinstance(j0, dict) else {}, "EntrantDocumentID", "EntrantDocumentId", "IdentityDocumentID") or extract_id(j0 if isinstance(j0, dict) else {}, "EntrantDocumentID", "EntrantDocumentId", "IdentityDocumentID")
     if eid:
         return eid, pid
 
+    headers_html = dict(headers_json)
+    headers_html["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
     try:
-        r_wz1 = s.post(target_url + "/Application/Wz1", json={"id": int(app_id)}, headers=headers_json)
-        if r_wz1.status_code == 200:
-            if r_wz1.text.startswith('{'):
-                j_wz1 = r_wz1.json()
-                data_wz1 = j_wz1.get("Data") or j_wz1
-                eid = extract_id(data_wz1, "EntrantID", "EntrantId") or eid
-                pid = extract_id(data_wz1, "EntrantDocumentID", "EntrantDocumentId", "IdentityDocumentID") or pid
-            elif r_wz1.text:
-                match = re.search(r'id="EntrantID"[^>]*value="(\d+)"', r_wz1.text, re.IGNORECASE)
-                if not match:
-                    match = re.search(r'name="EntrantID"[^>]*value="(\d+)"', r_wz1.text, re.IGNORECASE)
-                if not match:
-                    match = re.search(r'EntrantID["\s:=]+(\d+)', r_wz1.text, re.IGNORECASE)
+        r_wz1 = s.get(target_url + f"/Application/Wz1?id={app_id}", headers=headers_html)
+        text_wz1 = r_wz1.text if r_wz1.status_code == 200 else ""
+
+        if not text_wz1 or len(text_wz1) < 50:
+            r_wz1_post = s.post(target_url + "/Application/Wz1", json={"id": int(app_id)}, headers=headers_json)
+            if r_wz1_post.status_code == 200:
+                text_wz1 = r_wz1_post.text
+
+        if text_wz1:
+            if text_wz1.strip().startswith('{'):
+                try:
+                    j_wz1 = json.loads(text_wz1)
+                    data_wz1 = j_wz1.get("Data") or j_wz1
+                    eid = extract_id(data_wz1, "EntrantID", "EntrantId") or eid
+                    pid = extract_id(data_wz1, "EntrantDocumentID", "EntrantDocumentId", "IdentityDocumentID") or pid
+                except Exception:
+                    pass
+
+            if not eid:
+                match = re.search(r'<input[^>]*id=["\']EntrantID["\'][^>]*value=["\'](\d+)["\']', text_wz1, re.IGNORECASE) or \
+                        re.search(r'<input[^>]*name=["\']EntrantID["\'][^>]*value=["\'](\d+)["\']', text_wz1, re.IGNORECASE) or \
+                        re.search(r'<input[^>]*value=["\'](\d+)["\'][^>]*id=["\']EntrantID["\']', text_wz1, re.IGNORECASE) or \
+                        re.search(r'<input[^>]*value=["\'](\d+)["\'][^>]*name=["\']EntrantID["\']', text_wz1, re.IGNORECASE) or \
+                        re.search(r'EntrantID["\s:=]+(\d+)', text_wz1, re.IGNORECASE)
                 if match:
                     eid = int(match.group(1))
-    except Exception:
-        pass
+    except Exception as err:
+        print(f"   [WARNING] Failed to query /Application/Wz1: {err}")
 
     return eid, pid
 
-def get_passport_doc_id(s, target_url, headers_json, app_id, edu_doc_id, j0=None, j1=None):
-    # 1. Check j1 / j0 JSON responses
+def get_passport_doc_id(s, target_url, headers_json, app_id, edu_doc_id, entrant_id=None, j0=None, j1=None):
+    # 1. Query /Entrant/getEntrantDocuments directly by EntrantID (AUTHORITATIVE SOURCE)
+    if entrant_id:
+        try:
+            r_docs = s.post(target_url + "/Entrant/getEntrantDocuments", json={"EntrantID": str(entrant_id)}, headers=headers_json)
+            if r_docs.status_code == 200:
+                j_docs = r_docs.json()
+                if isinstance(j_docs, dict) and not j_docs.get("IsError") and isinstance(j_docs.get("Data"), list):
+                    for doc in j_docs["Data"]:
+                        dt_id = doc.get("DocumentTypeID")
+                        dt_name = str(doc.get("DocumentTypeName", "")).lower()
+                        if dt_id == 1 or "\u043f\u0430\u0441\u043f\u043e\u0440\u0442" in dt_name:
+                            p_id = doc.get("EntrantDocumentID")
+                            if p_id and int(p_id) > 0:
+                                return int(p_id)
+        except Exception as e:
+            print(f"   [WARNING] Failed to query getEntrantDocuments: {e}")
+
+    # 2. Check j1 / j0 JSON responses
     for source in [j1, j0]:
         if isinstance(source, dict):
             pid = extract_id(source.get("Data"), "EntrantDocumentID", "EntrantDocumentId", "IdentityDocumentID", "DocumentID") or \
                   extract_id(source, "EntrantDocumentID", "EntrantDocumentId", "IdentityDocumentID", "DocumentID")
             if pid and pid > 10000000 and pid != int(edu_doc_id):
                 return pid
-
-    headers_html = dict(headers_json)
-    headers_html["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-    
-    # 2. Search Wz3 GET/POST for 8-9 digit document IDs
-    try:
-        r_wz3 = s.get(target_url + f"/Application/Wz3?id={app_id}", headers=headers_html)
-        text = r_wz3.text
-        if text:
-            matches = re.findall(r'(?:entrantDocumentID|entrantdocumentid|docid|documentid)["\']?\s*[:=]\s*["\']?(\d{7,11})["\']?', text, re.IGNORECASE) or \
-                      re.findall(r'SetDocumentOriginalReceived[^)]*?(\d{7,11})', text, re.IGNORECASE) or \
-                      re.findall(r'value=["\'](\d{7,11})["\'][^>]*name=["\'](?:entrantDocumentID|EntrantDocumentID)["\']', text, re.IGNORECASE) or \
-                      re.findall(r'name=["\'](?:entrantDocumentID|EntrantDocumentID)["\'][^>]*value=["\'](\d{7,11})["\']', text, re.IGNORECASE) or \
-                      re.findall(r'\b(\d{8,9})\b', text)
-            for m in matches:
-                doc_id = int(m)
-                if edu_doc_id and doc_id == int(edu_doc_id):
-                    continue
-                if doc_id > 10000000 and doc_id != int(app_id):
-                    return doc_id
-    except Exception:
-        pass
-
-    try:
-        r_wz3_post = s.post(target_url + "/Application/Wz3", json={"id": int(app_id)}, headers=headers_json)
-        text = r_wz3_post.text
-        if text:
-            matches = re.findall(r'(?:entrantDocumentID|entrantdocumentid|docid|documentid)["\']?\s*[:=]\s*["\']?(\d{7,11})["\']?', text, re.IGNORECASE) or \
-                      re.findall(r'["\']EntrantDocumentID["\']\s*:\s*(\d{7,11})', text, re.IGNORECASE) or \
-                      re.findall(r'\b(\d{8,9})\b', text)
-            for m in matches:
-                doc_id = int(m)
-                if edu_doc_id and doc_id == int(edu_doc_id):
-                    continue
-                if doc_id > 10000000 and doc_id != int(app_id):
-                    return doc_id
-    except Exception:
-        pass
-
-    # 3. Fallback: In GVUZ MS SQL Server IDENTITY(1,1), Passport is inserted first (N), Diploma is inserted second (N+1)
-    if edu_doc_id and int(edu_doc_id) > 1:
-        return int(edu_doc_id) - 1
 
     return None
 
@@ -641,15 +630,19 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
                     records = j_search.get("Records", []) if isinstance(j_search, dict) else []
                     if records and len(records) > 0:
                         for rec in records:
+                            rec_eid = rec.get("EntrantId") or rec.get("EntrantID")
+                            if rec_eid and int(rec_eid) > 0 and not entrant_id:
+                                entrant_id = int(rec_eid)
+
                             found_app_id = rec.get("ApplicationId") or rec.get("ApplicationID")
-                            if found_app_id and int(found_app_id) > 0:
+                            if found_app_id and int(found_app_id) > 0 and int(found_app_id) != int(app_id):
                                 has_existing_app = True
                                 existing_app_info = rec
                                 break
             except Exception as search_err:
                 print(f"   [WARNING] Failed to query LoadApplicationNewRecords: {search_err}")
 
-        if has_existing_app or not app_id or app_id == 0:
+        if has_existing_app:
             existing_num = existing_app_info.get("ApplicationNumber") if existing_app_info else "N/A"
             existing_id = existing_app_info.get("ApplicationId") if existing_app_info else "N/A"
             msg = f"Entrant already has an application in FIS GIA (Application #{existing_num}, ID {existing_id})"
@@ -663,12 +656,13 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
 
             return {"application_number": app_num, "passport_series": passport_series, "passport_number": passport_number, "status": "ALREADY_EXISTS", "message": msg}
 
-        print(f"[NEW APPLICATION FOR EXISTING ENTRANT] EntrantIsNew = False, but NO application found in current campaign for passport {passport_series} {passport_number}. Continuing submission with draft ApplicationID {app_id}...")
+        print(f"[NEW APPLICATION FOR EXISTING ENTRANT] EntrantIsNew = False, but NO OTHER application found for passport {passport_series} {passport_number}. Continuing submission with draft ApplicationID {app_id}...")
 
     print("[SUCCESS] Step 1 created ApplicationID: " + str(app_id))
 
-    # STEP 1.5: Discover EntrantID & Passport EntrantDocumentID via Wz1
+    # STEP 1.5: Discover EntrantID
     entrant_id, passport_doc_id = get_entrant_id_from_server(s, target_url, headers_json, app_id, j0)
+
     if entrant_id:
         print("   [INFO] Discovered EntrantID: " + str(entrant_id))
     else:
@@ -735,12 +729,15 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
     updated_entrant_id = extract_id(j1.get("Data"), "EntrantID", "EntrantId", "id") or extract_id(j1, "EntrantID", "EntrantId", "id")
     if updated_entrant_id:
         entrant_id = updated_entrant_id
+
     if not passport_doc_id:
         passport_doc_id = extract_id(j1.get("Data"), "EntrantDocumentID", "EntrantDocumentId", "IdentityDocumentID") or extract_id(j1, "EntrantDocumentID", "EntrantDocumentId", "IdentityDocumentID")
     print("[SUCCESS] Step 2 updated personal details. EntrantID: " + str(entrant_id))
 
-    # STEP 2.5: Wz2
-    s.post(target_url + "/Application/Wz2", json={"id": int(app_id)}, headers=headers_json)
+    if not entrant_id or int(entrant_id) == 0:
+        err_msg = f"Cannot proceed to Step 3 for ApplicationID {app_id}: missing valid EntrantID from FIS GIA server."
+        print(f"[ERROR] Step 3 failed: {err_msg}")
+        return {"application_number": app_num, "passport_series": passport_series, "passport_number": passport_number, "status": "ERROR", "message": err_msg}
 
     # STEP 3: Attach Education Document via /Entrant/setEditDocument
     raw_gpa = data.get("average_mark")
@@ -806,8 +803,8 @@ def submit_single_application(s, target_url, headers_json, data, discovered_conf
     headers_form["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8"
     headers_form["Referer"] = target_url + "/Application/Edit/" + str(app_id)
 
-    if not passport_doc_id and edu_doc_id and int(edu_doc_id) > 1:
-        passport_doc_id = int(edu_doc_id) - 1
+    if not passport_doc_id:
+        passport_doc_id = get_passport_doc_id(s, target_url, headers_json, app_id, edu_doc_id, entrant_id=entrant_id, j0=j0, j1=j1)
 
     # 1. Confirm Passport Original
     if passport_doc_id:
