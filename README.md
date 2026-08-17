@@ -8,7 +8,7 @@
 
 ---
 
-## 🇷🇺 Русская версия (Russian Version)
+## 🇷🇺 RU: Русская версия (Russian Version)
 
 - [Идея и назначение](#-идея-и-назначение)
 - [Архитектура проекта](#-архитектура-проекта)
@@ -22,7 +22,7 @@
 
 ---
 
-## 🇬🇧 English Version
+## 🌐 EN: English Version
 
 - [Project Mission & Concept](#-project-mission--concept)
 - [Architecture Overview](#-architecture-overview)
@@ -36,7 +36,7 @@
 
 ---
 
-# 🇷🇺 Документация (Russian)
+# 🇷🇺 RU: Документация (Russian)
 
 ## 💡 Идея и назначение
 
@@ -261,7 +261,7 @@ FISGIA/
 
 ---
 
-# 🇬🇧 Documentation (English)
+# 🌐 EN: Documentation (English)
 
 ## 💡 Project Mission & Concept
 
