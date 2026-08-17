@@ -1,33 +1,19 @@
 # -*- coding: utf-8 -*-
+"""
+Client for interacting with BARS.Education (M3 Platform API) using session cookies.
+"""
+
 import os
-import re
 import json
 import logging
 import requests
 
+from config import load_client_env, DEFAULT_BARS_URL
+from parsers import format_date_filter, parse_extjs_js
+
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def format_date_filter(val: str) -> str:
-    """
-    Converts date string from dd.mm.yyyy (or dd.mm.yyyy HH:MM:SS) to ISO format yyyy-mm-ddThh:mm:ss.
-    If already in ISO format or empty, returns as is.
-    """
-    if not val:
-        return ""
-    val = str(val).strip()
-    if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', val):
-        return val
-    m = re.match(r'^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{1,2}):(\d{1,2}))?$', val)
-    if m:
-        day, month, year, hh, mm, ss = m.groups()
-        day = day.zfill(2)
-        month = month.zfill(2)
-        hh = (hh or "00").zfill(2)
-        mm = (mm or "00").zfill(2)
-        ss = (ss or "00").zfill(2)
-        return f"{year}-{month}-{day}T{hh}:{mm}:{ss}"
-    return val
 
 class BarsClient:
     """
@@ -36,30 +22,14 @@ class BarsClient:
     """
 
     def __init__(self, base_url=None, session_id=None, csrf_token=None):
-        client_dir = os.path.dirname(__file__)
-        for filename in ['config.env', '.env']:
-            env_path = os.path.join(client_dir, filename)
-            if os.path.exists(env_path):
-                try:
-                    with open(env_path, 'r', encoding='utf-8') as f:
-                        for line in f:
-                            line = line.strip()
-                            if line and not line.startswith('#') and '=' in line:
-                                k, v = line.split('=', 1)
-                                k = k.strip()
-                                v = v.strip().strip("'").strip('"')
-                                if k and k not in os.environ:
-                                    os.environ[k] = v
-                    break
-                except Exception:
-                    pass
+        load_client_env()
 
-        self.base_url = (base_url or os.getenv('BARS_BASE_URL', 'https://xn--n1abf.xn--33-6kcadhwnl3cfdx.xn--p1ai')).rstrip('/')
+        self.base_url = (base_url or os.getenv('BARS_BASE_URL', DEFAULT_BARS_URL)).rstrip('/')
         self.session_id = session_id or os.getenv('SSUZ_SESSIONID', '')
         self.csrf_token = csrf_token or os.getenv('CSRFTOKEN', '')
 
         if not self.session_id or not self.csrf_token:
-            logger.warning("[BARS] Warning: SSUZ_SESSIONID or CSRFTOKEN not found in .env!")
+            logger.warning("[BARS] Warning: SSUZ_SESSIONID or CSRFTOKEN not found in .env / config.env!")
 
         self.session = requests.Session()
         domain = self.base_url.replace('https://', '').replace('http://', '').split('/')[0]
@@ -84,6 +54,9 @@ class BarsClient:
         })
 
     def execute_action(self, pack_path: str, action_name: str = "objectrowsaction", payload: dict = None, silent: bool = False) -> dict:
+        """
+        Executes an action on the BARS M3 endpoint via HTTP POST.
+        """
         url = f"{self.base_url}/actions/{pack_path}/{action_name}"
         payload = payload or {}
 
@@ -98,8 +71,8 @@ class BarsClient:
             try:
                 data = response.json()
                 if isinstance(data, dict):
-                    if data.get("success") is False and "\u043d\u0435 \u0430\u0432\u0442\u043e\u0440\u0438\u0437\u043e\u0432\u0430\u043d\u044b" in data.get("message", ""):
-                        logger.error("[BARS ERROR] Session expired! Please update SSUZ_SESSIONID and CSRFTOKEN in client/.env")
+                    if data.get("success") is False and "не авторизован" in str(data.get("message", "")).lower():
+                        logger.error("[BARS ERROR] Session expired! Please update SSUZ_SESSIONID and CSRFTOKEN in client config")
                     data["_raw_text"] = raw_text
                     return data
                 return {"data": data, "_raw_text": raw_text}
@@ -169,6 +142,9 @@ class BarsClient:
         return self.execute_action("declaration", "objectrowsaction", payload)
 
     def get_declaration_plans(self, declaration_id: int, period_id: int = None, unit_id: int = None, finished_forms: int = 1, m3_window_id: str = "", grid_id: str = "") -> dict:
+        """
+        Queries declaration educational plans from BARS.
+        """
         payload = {
             'limit': 50,
             'start': 0,
@@ -181,12 +157,15 @@ class BarsClient:
             payload['m3_window_id'] = m3_window_id
         if grid_id:
             payload['grid_id'] = grid_id
-            
+
         pack = "ssuz.declaration.actions.PlansForDeclarationPack"
         action = "_plansfordeclarationrowsaction"
         return self.execute_action(pack, action, payload, silent=True)
 
     def get_declaration_edit_window(self, declaration_id: int, period_id: int = None) -> dict:
+        """
+        Queries declaration edit window containing form fields and ExtJS definitions.
+        """
         payload = {
             'object_id': declaration_id,
             'id': declaration_id,
@@ -195,6 +174,9 @@ class BarsClient:
         return self.execute_action("declaration", "declarationeditwindowaction", payload)
 
     def get_enrollee_details(self, enrollee_id: int) -> dict:
+        """
+        Queries enrollee details using multiple fallback packs.
+        """
         payload = {
             'object_id': enrollee_id,
             'id': enrollee_id,
@@ -215,29 +197,7 @@ class BarsClient:
         return {}
 
     def parse_extjs_js(self, js_content: str) -> dict:
-        extracted_data = {}
-        pattern = re.compile(
-            r"name\s*:\s*['\"](?P<name>[^'\"]+)['\"]"
-            r"(?:(?!new Ext\.).)*?"
-            r"(?:value\s*:\s*(?P<val_str>'[^']*'|\"[^\"]*\"|\d+(?:\.\d+)?|true|false)|defaultText\s*:\s*['\"](?P<def_text>[^'\"]+)['\"])",
-            re.DOTALL
-        )
-        for match in pattern.finditer(js_content):
-            name = match.group('name')
-            val_str = match.group('val_str')
-            def_text = match.group('def_text')
-            
-            if val_str:
-                if (val_str.startswith("'") and val_str.endswith("'")) or (val_str.startswith('"') and val_str.endswith('"')):
-                    val = val_str[1:-1]
-                else:
-                    val = val_str
-            elif def_text:
-                val = def_text
-            else:
-                val = ""
-                
-            if name not in extracted_data or val != "":
-                extracted_data[name] = val
-                
-        return extracted_data
+        """
+        Helper method calling standalone ExtJS parser.
+        """
+        return parse_extjs_js(js_content)
